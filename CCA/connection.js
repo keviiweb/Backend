@@ -43,11 +43,11 @@ const checkConnection = () => {
  * @param    {String} query
  * @return   MySQL Object
  */
-export const queryDatabase = (query) => {
+export const queryDatabase = (query, _data) => {
   return new Promise((resolve, reject) => {
-    pool.getConnection(function (err, connection) {
+    pool.getConnection(function (_err, connection) {
       // Use the connection
-      connection.query(query, function (error, results, fields) {
+      connection.query(query, function (error, results, _fields) {
         if (error) {
           console.error(error.sqlMessage);
           return reject(new Error(error));
@@ -59,7 +59,7 @@ export const queryDatabase = (query) => {
         // Handle error after the release.
         if (error) throw error;
 
-        resolve(results);
+        resolve([results, _data]);
 
         // Don't use the connection here, it has been returned to the pool.
       });

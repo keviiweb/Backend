@@ -21,6 +21,10 @@ app.use(cookieParser());
  */
 const config = {
   TABLE_USERS: process.env.TABLE_USERS,
+  TABLE_CCA: process.env.TABLE_CCA,
+  TABLE_ATTENDANCE: process.env.TABLE_ATTENDANCE,
+  TABLE_SESSIONS: process.env.TABLE_SESSIONS,
+  TABLE_CCA_CATEGORY: process.env.TABLE_CCA_CATEGORY
 };
 
 /**
@@ -63,8 +67,8 @@ app.get("/api/get", function (request, response) {
        *
        *  response.end() ends the HTTP request.
        */
-      response.send("Success");
-      response.end();
+      //response.send("Success");
+      //response.end();
     })
     .catch((err) => {
       console.log(err);
