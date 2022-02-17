@@ -7,15 +7,7 @@ import mysql from "mysql";
 import * as bcrypt from "bcrypt";
 import "dotenv/config";
 import { queryDatabase } from "./connection.js";
-
-export const config = {
-  TABLE_USER_LIST: process.env.TABLE_USER_LIST,
-  TABLE_USER_CCA_RECORD: process.env.TABLE_USER_CCA_RECORD,
-  TABLE_CCA_LIST: process.env.TABLE_CCA_LIST,
-  TABLE_CCA_CATEGORY: process.env.TABLE_CCA_CATEGORY,
-  TABLE_ANNOUCEMENTS: process.env.TABLE_ANNOUCEMENTS,
-  SALT_ROUNDS: process.env.SALT_ROUNDS,
-};
+import { config } from "./constants.js";
 
 /* ----------- Create Object Functions --------------*/
 
@@ -454,3 +446,21 @@ export const convertStringToArray = (string) => {
 
   return usingArrayFrom;
 };
+
+/**
+ * Clean up script
+ * @author   TBC by HaoLi
+ * @return   {JSONArray} JSON Array
+ */
+const checkEditableSessions = () => {
+  // TABLE NAME:   config["TABLE_CCA_SESSIONS"]
+
+  /* Required Tasks: 
+    1. Initialize a variable that contains the current date (eg. use getCurrentDate())
+    2. Write a SQL query to get all sessions with editable variable set to 1 (aka can edit the session) 
+    3. If number of row > 0, loop through the results and check if the date is >= current date + 2 weeks
+    4. If there is such a row, write a SQL query to UPDATE the editable variable and set it to 0
+    5. No output required
+  */
+}
+

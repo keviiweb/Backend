@@ -1,4 +1,3 @@
-import "dotenv/config";
 import mysql from "mysql";
 import express from "express";
 import bodyParser from "body-parser";
@@ -18,10 +17,11 @@ import {
   checkPrivilege,
   addMemberToCCA,
   addLeaderToCCA,
-  retrieveAllCCA,
   getCurrentDate,
   convertStringToArray,
+  checkAdminPrivilege,
 } from "./helper.js";
+import { config } from "./constants.js";
 import { pool, queryDatabase } from "./connection.js";
 import * as bcrypt from "bcrypt";
 import pkg from "jsonwebtoken";
@@ -55,7 +55,9 @@ const withAuth = function (request, response, next) {
       if (err) {
         response.status(401).end();
       } else {
-        request.studentID = decoded.studentID;
+        response.locals.studentID = decoded.studentID;
+        response.locals.id = decoded.id;
+        response.locals.authenticated = true;
         next();
       }
     });
@@ -63,33 +65,12 @@ const withAuth = function (request, response, next) {
 };
 
 /**
- * Config table setup. This is where all the table names for
- * the SQL database can be found.
- */
-const config = {
-  TABLE_USER_LIST: process.env.TABLE_USER_LIST,
-  TABLE_USER_CCA_RECORD: process.env.TABLE_USER_CCA_RECORD,
-  TABLE_CCA_LIST: process.env.TABLE_CCA_LIST,
-  TABLE_CCA_SESSIONS: process.env.TABLE_CCA_SESSIONS,
-  TABLE_CCA_CATEGORY: process.env.TABLE_CCA_CATEGORY,
-  TABLE_CCA_SESSION_ATTENDANCE: process.env.TABLE_CCA_SESSION_ATTENDANCE,
-  TABLE_ANNOUCEMENTS: process.env.TABLE_ANNOUCEMENTS,
-  JWT_SECRET: process.env.JWT_SECRET,
-  SALT_ROUNDS: process.env.SALT_ROUNDS,
-  SQL_ROW_LIMIT: process.env.SQL_ROW_LIMIT,
-};
-
-/**
  * Get all upcoming CCAs based on the member
  * @author   Chung Loong
  * @return   {JSON} JSON object indicating all upcoming CCAs for the user
  */
-app.get("/api/session/member/latest", withAuth, function (request, response) {
-  // TESTING PURPOSE
-  let { id } = request.query;
-
-  // ACTUAL
-  //let { id } = request.body;
+app.get("/api/session/member/latest", withAuth, function (_request, response) {
+  const id = response.locals.id;
 
   if (id) {
     const ccaQuery = mysql.format(
@@ -168,42 +149,6 @@ app.get("/api/session/member/latest", withAuth, function (request, response) {
   }
 });
 
-/**
- * Get all upcoming CCAs sessions based on the CCA ID
- * @author   
- * @return   {JSON} JSON object indicating all upcoming CCAs sessions for the user
- */
-app.get("/api/session/cca/upcoming", withAuth, function (request, response) {
-  
-  
-  
-  
-});
-
-/**
- * Get all previous CCAs sessions based on the CCA ID
- * @author   
- * @return   {JSON} JSON object indicating all previous CCAs sessions for the user
- */
-app.get("/api/session/cca/previous", withAuth, function (request, response) {
-  
-  
-  
-});
-
-/**
- * View session details based on ID
- * @author   
- * @return   {JSON} JSON object details based on particular sessionID
- */
-app.get("/api/session/cca/id", withAuth, function (request, response) {
- 
- 
- 
- 
- 
-});
-
 /* ----------------  CCA Functions          --------------- */
 
 /**
@@ -213,11 +158,12 @@ app.get("/api/session/cca/id", withAuth, function (request, response) {
  * @return   {JSONArray} JSON Array
  */
 app.get("/api/cca/overview", withAuth, function (request, response) {
+  const id = response.locals.id;
   // TESTING PURPOSE
-  let { id, ccaID } = request.query;
+  let { ccaID } = request.query;
 
   // ACTUAL
-  //let { id } = request.body;
+  //let { ccaID } = request.body;
 
   if (id && ccaID) {
     checkPrivilege(id, ccaID, (leader) => {
@@ -281,10 +227,11 @@ app.get("/api/cca/overview", withAuth, function (request, response) {
  */
 app.get("/api/cca/individual", withAuth, function (request, response) {
   // TESTING PURPOSE
-  let { id, targetID, ccaID } = request.query;
+  let id = response.locals.id;
+  let { targetID, ccaID } = request.query;
 
   // ACTUAL
-  //let { id, targetID, ccaID } = request.body;
+  //let { targetID, ccaID } = request.body;
 
   if (id && targetID && ccaID) {
     checkPrivilege(id, ccaID, (leader) => {
@@ -493,47 +440,356 @@ app.post("/api/user/changepassword", function (request, response) {
 
 /**
  * Profile page, showing user details and list of CCAs for the user
- * @author   
+ * @author   Chung Loong
  * @return   {JSONArray} JSON Array
  */
-app.get("/api/user/profile", withAuth, function (request, response) {
- 
- 
+app.get("/api/user/profile", withAuth, function (_request, response) {
+  const id = response.locals.id;
 
+  if (id) {
+    const selectQuery = mysql.format(
+      "SELECT name, studentID, email FROM ?? WHERE id = ?",
+      [config["TABLE_USER_LIST"], id]
+    );
+    queryDatabase(selectQuery)
+      .then((sqlResult) => {
+        const data = sqlResult[0];
+        if (data.length == 1) {
+          const ccaQuery = mysql.format(
+            "SELECT ccaID, ccaAttendance FROM ?? WHERE studentID = ? ",
+            [config["TABLE_USER_CCA_RECORD"], id]
+          );
+          queryDatabase(ccaQuery, data).then((sqlResult) => {
+            const profileData = sqlResult[1];
+            const ccaResults = sqlResult[0];
+            const promiseArray = [];
+            if (ccaResults.length > 0) {
+              for (let i = 0; i < ccaResults.length; i++) {
+                let row = ccaResults[i];
+                promiseArray.push(
+                  new Promise((resolve, _reject) => {
+                    translateCCAIDtoName(
+                      row.ccaID,
+                      row.ccaAttendance,
+                      (result, _parameter) => {
+                        resolve({ ccaName: result, ccaAttendance: _parameter });
+                      }
+                    );
+                  })
+                );
+              }
+            }
+
+            Promise.all(promiseArray).then((data) => {
+              const profile = {
+                name: profileData[0].name,
+                studentID: profileData[0].studentID,
+                email: profileData[0].email,
+              };
+              response.send({
+                success: true,
+                data: { profile: profile, CCA: data },
+              });
+              response.end();
+            });
+          });
+        } else {
+          response.send({ success: false, data: {} });
+          response.end();
+        }
+      })
+      .catch((_err) => {
+        response.send({ success: false, data: {} });
+        response.end();
+      });
+  } else {
+    response.end();
+  }
 });
 
 /**
  * Get the list of CCAs the user has. The list is split into two,
  * one for CCAs that the user is a leader in, and the other that the
  * user is a member in.
- * @author   
+ * @author   Chung Loong
  * @return   {JSONArray} JSON Array
  */
-app.get("/api/user/cca", withAuth, function (request, response) {
- 
- 
- 
- 
- 
+app.get("/api/user/cca", withAuth, function (_request, response) {
+  const id = response.locals.id;
+
+  if (id) {
+    const selectQuery = mysql.format(
+      "SELECT ccaID, leader FROM ?? WHERE studentID = ?",
+      [config["TABLE_USER_CCA_RECORD"], id]
+    );
+
+    queryDatabase(selectQuery)
+      .then((sqlResult) => {
+        const data = sqlResult[0];
+        if (data.length > 0) {
+          const leaderPromiseArray = [];
+          const memberPromiseArray = [];
+          for (let i = 0; i < data.length; i++) {
+            let row = data[i];
+
+            const isLeader = row.leader;
+            if (isLeader == 1) {
+              leaderPromiseArray.push(
+                new Promise((resolve, _reject) => {
+                  translateCCAIDtoName(
+                    row.ccaID,
+                    row,
+                    (dataResult, _parameter) => {
+                      resolve({ ccaID: _parameter.ccaID, ccaName: dataResult });
+                    }
+                  );
+                })
+              );
+            } else {
+              memberPromiseArray.push(
+                new Promise((resolve, _reject) => {
+                  translateCCAIDtoName(
+                    row.ccaID,
+                    row,
+                    (dataResult, _parameter) => {
+                      resolve({ ccaID: _parameter.ccaID, ccaName: dataResult });
+                    }
+                  );
+                })
+              );
+            }
+          }
+
+          Promise.all(leaderPromiseArray).then((leaderResult) => {
+            Promise.all(memberPromiseArray).then((memberResult) => {
+              response.send({
+                success: true,
+                data: {
+                  studentID: id,
+                  leader: leaderResult,
+                  member: memberResult,
+                },
+              });
+              response.end();
+            });
+          });
+        } else {
+          response.send({ success: false, data: {} });
+          response.end();
+        }
+      })
+      .catch((_err) => {
+        response.send({ success: false, data: {} });
+        response.end();
+      });
+  } else {
+    response.end();
+  }
 });
 
-/* ----------------  Misc Code  --------------- */
+/* ----------------  KE Web Members assignment ----------- */
+
+/**
+ * Create a new CCA session
+ * @author   TBC by Jian Ming, Cheng Wei
+ * @return   {JSON} JSON object indicating success
+ */
+app.post("/api/session/create", withAuth, function (request, response) {
+  // TABLE NAME:   config["TABLE_CCA_SESSIONS"]
+
+  /** 
+   * Format of variables
+   * name: varchar(30)
+	 * ccaID	int(11)
+	 * week	int(11)
+	 * date	date (in YYYY-MM-DD format)
+	 * startTime	time (in HH:ss format)
+	 * endTime	time (in HH:ss format)
+	 * editable	tinyint(1) (1 represent true, 0 represent false)
+	 * remarks	varchar(200)
+	 * ldrNotes	varchar(200)
+	 * membersE	varchar(200) (array representing user ID eg. "[11,13]")
+	 * optional	tinyint(1) (1 represent true, 0 represent false)
+   * */ 
+
+  // Parameters to insert {name, ccaID, week, date, startTime, endTime, editable, remarks, ldrNotes, membersE, optional}
+
+  // This id is the id of the currently logged in user.
+  const userID = response.locals.id;
+
+  /* Required Tasks: 
+    1. Use checkPrivilege on userID to determine if the user is a CCA leader. checkPrivilege takes in a user ID and a CCA id
+    3. Write a SQL query to INSERT the parameters above into the database
+    4. Return a JSON object indicating success/failure in the following format: { success: true, data: "Success" }
+    5. Sample output { success: true, data: "Success" }
+  */
+});
+
+/**
+ * Edit a new CCA session
+ * @author   TBC by Jian Ming, Cheng Wei
+ * @return   {JSON} JSON object indicating success
+ */
+app.post("/api/session/edit", withAuth, function (request, response) {
+  // TABLE NAME:   config["TABLE_CCA_SESSIONS"]
+
+  /** 
+   * Format of variables to use in database query
+   * id: int(11)
+   * name: varchar(30)
+	 * ccaID	int(11)
+	 * week	int(11)
+	 * date	date (in YYYY-MM-DD format)
+	 * startTime	time (in HH:ss format)
+	 * endTime	time (in HH:ss format)
+	 * editable	tinyint(1) (1 represent true, 0 represent false)
+	 * remarks	varchar(200)
+	 * ldrNotes	varchar(200)
+	 * membersE	varchar(200) (array representing user ID eg. "[11,13]")
+	 * optional	tinyint(1) (1 represent true, 0 represent false)
+   * */ 
+  //Parameters {id, name, ccaID, week, date, startTime, endTime, editable, remarks, ldrNotes, membersE, optional}
+  
+  // This id is the id of the currently logged in user.
+  const userID = response.locals.id;
+
+  /* Required Tasks: 
+    1. Use checkPrivilege on userID to determine if the user is a CCA leader. checkPrivilege takes in a user ID and a CCA id
+    2. Use the editable variable to determine if the session can be edited.
+    3. Write a SQL query to UPDATE the parameters above into the database
+    4. Return a JSON object indicating success/failure in the following format:
+    5. Sample output { success: true, data: "Success" }
+  */
+});
+
+/**
+ * Delete a new CCA session
+ * @author   TBC by Jian Ming, Cheng Wei
+ * @return   {JSON} JSON object indicating success
+ */
+app.post("/api/session/delete", withAuth, function (request, response) {
+  // TABLE NAME:   config["TABLE_CCA_SESSIONS"]
+
+  /** 
+   * Format of variables to use in database query
+   * id: varchar(30) (session ID)
+	 * id: int(11) (CCA ID)
+   * */ 
+  //Parameters {id, ccaID}
+
+  // This id is the id of the currently logged in user.
+  const userID = response.locals.id;
+
+  /* Required Tasks: 
+    1. Use checkPrivilege on userID to determine if the user is a CCA leader. checkPrivilege takes in a user ID and a CCA id
+    2. Write a SQL query to get the editable variable and check if session can be edited
+    3. Write a SQL query to DELETE the parameters above into the database
+    4. Return a JSON object indicating success/failure in the following format: { success: true, data: "Success" }
+    5. Sample output { success: true, data: "Success" }
+  */
+});
+
+/**
+ * Get all upcoming CCAs sessions based on the CCA ID
+ * @author   TBC by Ding Xuan
+ * @return   {JSON} JSON object indicating all upcoming CCAs sessions for the user
+ */
+app.get("/api/session/cca/upcoming", withAuth, function (request, response) {
+  // TABLE NAME:   config["TABLE_CCA_SESSIONS"]
+
+ /** 
+   * Format of variables to use in database query
+   * id : varchar(30)
+   * */ 
+  //Parameters {ccaID}
+
+  /* Required Tasks: 
+    1. Get the current date using the getCurrentDate() function provided
+    2. Write a SQL query to get all upcoming session that is >= current date
+    3. Get the following variables from the database: id, week, date, startTime, endTime 
+    4. If number of row > 0, create an array and push the data into the array
+    5. Return a JSON object indicating success/failure in the following format: { success: true, data: <results> }
+    6. Sample output {"success":true,"data":[{"id":1,"week":1,"date":"2022-02-14","startTime":"21:00","endTime":"22:00"},
+                      {"id":2,"week":0,"date":"2022-02-07","startTime":"21:00","endTime":"22:00"}
+                      ]} 
+  */
+});
+
+/**
+ * Get all previous CCAs sessions based on the CCA ID
+ * @author   TBC by Ang Yong
+ * @return   {JSON} JSON object indicating all previous CCAs sessions for the user
+ */
+app.get("/api/session/cca/previous", withAuth, function (request, response) {
+  // TABLE NAME:   config["TABLE_CCA_SESSIONS"]
+
+  /** 
+   * Format of variables to use in database query
+   * id: varchar(30)
+   * */ 
+  //Parameters {ccaID}
+
+  /* Required Tasks: 
+    1. Get the current date using the getCurrentDate() function provided
+    2. Write a SQL query to get all upcoming session that is < current date
+    3. Get the following variables from the database: id, week, date, startTime, endTime 
+    4. If number of row > 0, create an array and push the data into the array
+    5. Return a JSON object indicating success/failure in the following format: { success: true, data: <results> }
+    6. Sample output {"success":true,"data":[{"id":1,"week":1,"date":"2022-02-14","startTime":"21:00","endTime":"22:00"},
+                      {"id":2,"week":0,"date":"2022-02-07","startTime":"21:00","endTime":"22:00"}
+                      ]} 
+  */
+});
+
+/**
+ * View session details based on ID
+ * @author   TBC by Brandon, ZhengXi 
+ * @return   {JSON} JSON object details based on particular sessionID
+ */
+app.get("/api/session/cca/id", withAuth, function (request, response) {
+  // TABLE NAME:   config["TABLE_CCA_SESSIONS"]
+
+  /** 
+   * Format of variables to use in database query
+   * id: varchar(30)
+   * */ 
+  //Parameters {sessionID}
+
+  /* Required Tasks: 
+    1. Get the current date using the getCurrentDate() function provided
+    2. Write a SQL query to get all upcoming session that is < current date
+    3. Get the following variables from the database: id, week, date, startTime, endTime, editable, remarks, ldrNotes, membersE, optional 
+    4. If number of row > 0, create an array and push the data into the array
+    5. Return a JSON object indicating success/failure in the following format: { success: true, data: <results> }
+    6. Sample output {"success":true,"data":[{"id":1,"week":1,"date":"2022-02-14","startTime":"21:00","endTime":"22:00"},
+                      {"id":2,"week":0,"date":"2022-02-07","startTime":"21:00","endTime":"22:00"}
+                      ]} 
+  */
+});
+
 
 /**
  * Get all announcements
- * @author   
+ * @author   TBC by MinJiun
  * @return   {JSONArray} JSON Array
  */
-app.get("/api/misc/annoucement", function (_request, response) {
+app.get("/api/misc/annoucement", withAuth, function (_request, response) {
+  // TABLE NAME:  config["TABLE_ANNOUCEMENTS"]
+  /** 
+   * Format of variables to use in database query
+   * none needed
+   * */ 
+  //Parameters none needed
 
-
-
-
-
-
-
+  /* Required Tasks: 
+    1. Write a SQL query to get all annoucements
+    2. Get the following variables from the database: id, name, imageURL, lastUpdated 
+    3. If number of row > 0, create an array and push the data into the array
+    4. Return a JSON object indicating success/failure in the following format: { success: true, data: <results> }
+    5. Sample output {"success":true,"data":[{"id":1,"name":"KEWeb Workshop","imageURL":"/img/keweb.png",
+                      "lastUpdated":"2022-02-13T13:30:37.000Z"}]}
+  */
 });
-
 
 /* ----------------  Template   --------------- */
 
@@ -543,7 +799,7 @@ app.get("/api/misc/annoucement", function (_request, response) {
  * @author   Chung Loong
  * @return   void
  */
-app.get("/api/get", function (request, response) {
+ app.get("/api/get", function (request, response) {
   /**
    *  Use mysql.format() to format strings nicely
    *  Returns a valid, escaped query
@@ -557,13 +813,14 @@ app.get("/api/get", function (request, response) {
    */
   queryDatabase(sql)
     .then((data) => {
+      const selectResult = data[0];
       /**
        * Do all the logic here
        * eg. sending HTTP response back to the user
        */
 
-      // `data` variable now contains results from database
-      console.log(data);
+      // `selectResult` variable now contains results from database
+      console.log(selectResult);
 
       /**
        *  Always send a response regardless of success or failure
@@ -610,13 +867,14 @@ app.post("/api/post", function (request, response) {
    */
   queryDatabase(sql)
     .then((data) => {
+      const selectResult = data[0];
       /**
        * Do all the logic here
        * eg. sending HTTP response back to the user
        */
 
-      // `data` variable now contains results from database
-      console.log(data);
+      // `selectResult` variable now contains results from database
+      console.log(selectResult);
 
       /**
        *  Always send a response regardless of success or failure
@@ -639,14 +897,56 @@ app.post("/api/post", function (request, response) {
     });
 });
 
-
 /* ----------------  Main Code  --------------- */
 app.get("/", function (_request, response) {
+  // Examples
+  // const categoryBody = { name: "Sports" };
+  // createCCACategory(categoryBody);
+
+  // const ccaBody = { name: "Basketball M", categoryName: "Sports" };
+  // createCCA(ccaBody);
+
+  // const userBody = {
+  //   name: "Yonah",
+  //   studentID: "A0231452",
+  //   email: "yonah@u.nus.edu",
+  //   password: "testing123",
+  // };
+
+  // const userBody2 = {
+  //   name: "Chung Loong",
+  //   studentID: "A0123456",
+  //   email: "cl@u.nus.edu",
+  //   password: "testing123",
+  // };
+  // createUserAccount(userBody);
+  // createUserAccount(userBody2);
+
+  // translateUserNametoID("Yonah", [], (_parameter, userID) => {
+  //   translateCCANametoID("Basketball M", userID, (_parameter, ccaID) => {
+  //     addMemberToCCA(userID, ccaID);
+  //   })
+  // });
+
+  // translateUserNametoID("Chung Loong", [], (_parameter, userID) => {
+  //   translateCCANametoID("Basketball M", userID, (_parameter, ccaID) => {
+  //     addLeaderToCCA(userID, ccaID);
+  //   })
+  // });
+
+  //retrieveAllCCA();
+
+  // const annoucementBody = {
+  //   name: "KEWeb Workshop",
+  //   imageURL: "/img/keweb.png",
+  // };
+  // createAnnoucement(annoucementBody);
+
   response.send("Hello World");
   response.end();
 });
 
-let port = process.env.NODE_PORT;
+let port = config["NODE_PORT"];
 app.listen(port, () => console.log(`CCA app listening on port ${port}!`));
 process.on("SIGINT", function () {
   console.log("\nGracefully shutting down from SIGINT (Ctrl-C)");

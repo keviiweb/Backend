@@ -1,5 +1,5 @@
 import mysql from "mysql";
-import "dotenv/config";
+import { config } from "./constants.js";
 
 /**
  * Function that creates a pool of database connections
@@ -8,11 +8,11 @@ import "dotenv/config";
  */
 export const pool = mysql.createPool({
   connectionLimit: 30,
-  host: process.env.DATABASE_HOST,
-  user: process.env.DATABASE_USER,
-  password: process.env.DATABASE_PASSWORD,
-  database: process.env.DATABASE_NAME,
-  port: process.env.DATABASE_PORT,
+  host: config["DATABASE_HOST"],
+  user: config["DATABASE_USER"],
+  password: config["DATABASE_PASSWORD"],
+  database: config["DATABASE_NAME"],
+  port: config["DATABASE_PORT"],
   timezone: "+08:00",
   waitForConnections: true,
 });
